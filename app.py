@@ -1,6 +1,7 @@
 # app.py
 # Streamlit app: Visualisasi posisi Stasiun Luar Angkasa Internasional (ISS)
-# Cara pakai: streamlit run app.py
+# Menggunakan API https://api.wheretheiss.at/ untuk data real-time
+# Cara jalankan: streamlit run app.py
 
 import streamlit as st
 import requests
@@ -8,89 +9,130 @@ import pandas as pd
 import pydeck as pdk
 from datetime import datetime
 
-API_URL = "http://api.open-notify.org/iss-now.json"
+# ==============================
+# KONFIGURASI
+# ==============================
+API_URL = "https://api.wheretheiss.at/v1/satellites/25544"
 
+st.set_page_config(page_title="ISS Tracker", layout="wide")
+st.title("📡 ISS — Posisi Stasiun Luar Angkasa (Real-time)")
+
+# ==============================
+# FUNGSI AMBIL DATA ISS
+# ==============================
 @st.cache_data(ttl=10)
 def get_iss_position():
-    """Mengambil posisi ISS dari API open-notify.
-    Mengembalikan dict: {"latitude": float, "longitude": float, "timestamp": int}
-    Jika gagal, mengembalikan None.
-    """
+    """Mengambil posisi ISS dari API wheretheiss.at"""
     try:
-        resp = requests.get(API_URL, timeout=5)
-        resp.raise_for_status()
-        data = resp.json()
-        pos = data.get("iss_position", {})
-        lat = float(pos.get("latitude"))
-        lon = float(pos.get("longitude"))
-        ts = int(data.get("timestamp", 0))
-        return {"latitude": lat, "longitude": lon, "timestamp": ts}
+        response = requests.get(API_URL, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        lat = float(data["latitude"])
+        lon = float(data["longitude"])
+        alt = float(data["altitude"])
+        vel = float(data["velocity"])
+        vis = data["visibility"]
+        ts = int(data["timestamp"])
+        return {
+            "latitude": lat,
+            "longitude": lon,
+            "altitude": alt,
+            "velocity": vel,
+            "visibility": vis,
+            "timestamp": ts,
+        }
     except Exception as e:
         st.error(f"Gagal mengambil data ISS: {e}")
         return None
 
-# Layout
-st.set_page_config(page_title="ISS Tracker", layout="wide")
-st.title("📡 ISS — Posisi Stasiun Luar Angkasa (Real-time)")
 
+# ==============================
+# TATA LETAK
+# ==============================
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.markdown("##### Lokasi saat ini di peta")
-    placeholder = st.empty()
+    st.markdown("### 🌍 Lokasi ISS saat ini di peta")
+    map_placeholder = st.empty()
 
 with col2:
-    st.markdown("##### Info posisi")
+    st.markdown("### 📊 Informasi posisi ISS")
     auto_refresh = st.checkbox("Auto-refresh (setiap 10 detik cache)")
     if st.button("Refresh sekarang"):
-        # Force re-run by clearing cache for get_iss_position
         get_iss_position.clear()
 
-    info_box = st.empty()
+    info_placeholder = st.empty()
 
-# Ambil data
-pos = get_iss_position()
 
-if pos is not None:
-    lat = pos["latitude"]
-    lon = pos["longitude"]
-    ts = pos["timestamp"]
+# ==============================
+# AMBIL & TAMPILKAN DATA
+# ==============================
+data = get_iss_position()
+
+if data:
+    lat = data["latitude"]
+    lon = data["longitude"]
+    alt = data["altitude"]
+    vel = data["velocity"]
+    vis = data["visibility"]
+    ts = data["timestamp"]
     ts_human = datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # Tampilkan angka
-    with info_box:
+    with info_placeholder:
         st.write(f"**Latitude:** {lat:.6f}")
         st.write(f"**Longitude:** {lon:.6f}")
-        st.write(f"**Timestamp:** {ts} ({ts_human})")
+        st.write(f"**Altitude:** {alt:.2f} km")
+        st.write(f"**Velocity:** {vel:.2f} km/h")
+        st.write(f"**Visibility:** {vis}")
+        st.write(f"**Timestamp:** {ts_human}")
 
-    # Dataframe untuk st.map atau pydeck
     df = pd.DataFrame([{"lat": lat, "lon": lon}])
 
-    # PyDeck map fancy
+    # Peta menggunakan PyDeck
     view_state = pdk.ViewState(latitude=lat, longitude=lon, zoom=2, pitch=0)
     layer = pdk.Layer(
         "ScatterplotLayer",
         data=df,
         get_position="[lon, lat]",
-        get_radius=50000,
+        get_radius=70000,
         radius_units="meters",
-        get_fill_color="[255, 0, 0, 160]",
+        get_fill_color="[255, 100, 0, 180]",
         pickable=True,
     )
-    tooltip = {"html": "<b>ISS</b><br/>Latitude: {lat}<br/>Longitude: {lon}", "style": {"color": "#000000"}}
 
-    r = pdk.Deck(layers=[layer], initial_view_state=view_state, tooltip=tooltip)
+    tooltip = {
+        "html": "<b>ISS (International Space Station)</b><br/>Lat: {lat}<br/>Lon: {lon}",
+        "style": {"color": "black"},
+    }
 
-    with placeholder:
-        st.pydeck_chart(r)
+    deck = pdk.Deck(layers=[layer], initial_view_state=view_state, tooltip=tooltip)
+    with map_placeholder:
+        st.pydeck_chart(deck)
 
-    # Additional: tampilkan lokasi dalam format tabel kecil
     st.markdown("---")
-    st.markdown("#### Riwayat (sementara dari cache)")
-    st.dataframe(df)
+    st.markdown("#### 🧾 Data ringkas")
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "Latitude": lat,
+                    "Longitude": lon,
+                    "Altitude (km)": alt,
+                    "Velocity (km/h)": vel,
+                    "Visibility": vis,
+                    "Timestamp (UTC)": ts_human,
+                }
+            ]
+        )
+    )
 
 else:
-    st.warning("Tidak ada data posisi ISS saat ini.")
+    st.warning("Tidak dapat menampilkan data ISS saat ini.")
 
-# Catatan auto-refresh: pengguna bisa menekan tombol Refresh, atau biarkan cache ttl=10 detik untuk pembaruan otomatis
-st.caption("Sumber data: open-notify.org — API publik untuk posisi ISS. Tekan 'Refresh sekarang' untuk memperbarui.")
+# ==============================
+# CATATAN
+# ==============================
+st.caption(
+    "Sumber data: [wheretheiss.at](https://wheretheiss.at/) — API publik pelacak ISS. "
+    "Gunakan tombol 'Refresh sekarang' atau aktifkan auto-refresh untuk pembaruan otomatis."
+)
